@@ -1,42 +1,119 @@
-# Cloudflare Dynamic DNS IP Updater
-<img alt="GitHub" src="https://img.shields.io/github/license/K0p1-Git/cloudflare-ddns-updater?color=black"> <img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/K0p1-Git/cloudflare-ddns-updater/main"> <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/K0p1-Git/cloudflare-ddns-updater">
+# Dynamic DNS (DDNS) for Cloudflare
 
-This script is used to update Dynamic DNS (DDNS) service based on Cloudflare! Access your home network remotely via a custom domain name without a static IP! Written in pure BASH.
+Minimalist Bash script to update Cloudflare DNS records when your public IP changes.
 
-## Support Me
-[![Donate Via Paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.me/Jasonkkf)
+> **Note:** This is a customized fork of the [original project by K0p1-Git](https://github.com/K0p1-Git/cloudflare-ddns-updater). See key changes section below
+
+## Prerequisites
+
+Ensure your system has the following installed:
+
+*   `bash`
+*   `xh` for Cloudflare API requests
+*   `dnsutils` on Debian/Ubuntu for the `dig` command for finding public IP
+*   `jq` for parsing JSON responses
 
 ## Installation
 
+1. Clone the repository:
+   ```bash
+   git clone <your-repo-url>
+   cd cloudflare-ddns-updater
+   chmod +x cloudflare_ddns.sh
+   ```
+
+## Configuration
+
+To keep your API tokens secure, this script loads configuration from a hidden secrets file.
+
+1. Create the secrets file:
+   ```bash
+   nano ~/.ddns_secrets
+   ```
+
+2. Paste the following configuration and fill in your details:
+   ```bash
+   # Cloudflare Credentials
+   export CF_AUTH_EMAIL="your_email@example.com"
+   export CF_API_TOKEN="your_cloudflare_api_token"
+   export CF_ZONE_ID="your_zone_id"
+   export CF_RECORD_NAME="subdomain.yourdomain.com"
+
+   # Optional Settings
+   export CF_TTL=60                             # Default is 60 seconds
+   export DISCORD_WEBHOOK_URI="https://discord..." # Leave empty to disable
+   ```
+
+3. **Important:** Secure the file so only your user can read it:
+   ```bash
+   chmod 600 ~/.ddns_secrets
+   ```
+
+## Automation (Cron)
+
+Use `crontab` to run the script automatically. Since the script handles caching efficiently, you can run it frequently (e.g., every 1-5 minutes) without hitting API rate limits.
+
+1. Edit your crontab:
+   ```bash
+   crontab -e
+   ```
+
+2. Add the schedule (example: run every 5 minutes):
+   ```bash
+   */5 * * * * /path/to/cloudflare_ddns.sh
+   ```
+
+## Checking logs
+
+A `-t "DDNS-Updater"` flag is used to tags logs
+
+The best way to view these logs in modern systems is using `journalctl`:
+
+**View all logs for your script:**
 ```bash
-git clone https://github.com/K0p1-Git/cloudflare-ddns-updater.git
+# View all logs
+journalctl -t DDNS-Updater
+
+# Watch logs in real-time (like `tail -f`)
+journalctl -f -t DDNS-Updater
+
+# View only logs from today:
+journalctl -t DDNS-Updater --since "today"
 ```
 
-## Usage
-This script is used with crontab. Specify the frequency of execution through crontab.
+Note on the `-s` flag. The `-s` flag sends the output to standard error:
 
-```bash
-# ┌───────────── minute (0 - 59)
-# │ ┌───────────── hour (0 - 23)
-# │ │ ┌───────────── day of the month (1 - 31)
-# │ │ │ ┌───────────── month (1 - 12)
-# │ │ │ │ ┌───────────── day of the week (0 - 6) (Sunday to Saturday 7 is also Sunday on some systems)
-# │ │ │ │ │ ┌───────────── command to issue                               
-# │ │ │ │ │ │
-# │ │ │ │ │ │
-# * * * * * /bin/bash {Location of the script}
-```
+* Cron captures this output and discards it as I haven't set up redirection.
+* When running manually the output is visible directly in terminal and is saved to the system logs.
 
-## Tested Environments:
-macOS Mojave version 10.14.6 (x86_64) <br />
-AlmaLinux 9.3 (Linux kernel: 5.14.0 | x86_64) <br />
-Debian Bullseye 11 (Linux kernel: 6.1.28 | aarch64) <br />
+## Logic Flow
 
-## Contributing
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+1. **Get Public IP:** Queries Cloudflare/Google/OpenDNS via `dig`.
+2. **Check Cache:** Compares public IP with `/tmp/cloudflare_ddns_server.example.com.cache`.
+    *   *Match:* Exit silently (0 network calls).
+    *   *Mismatch:* Proceed to update.
+3. **Update:**
+    *   Tries to `PATCH` Cloudflare immediately using the locally cached Record ID.
+    *   If that fails (or ID is missing), performs a `GET` lookup to find the ID, then updates.
 
-## Reference
-This script was made with reference from [Keld Norman](https://www.youtube.com/watch?v=vSIBkH7sxos) video.
+## Credits & Reference
+
+*   Original Script by [K0p1-Git](https://github.com/K0p1-Git/cloudflare-ddns-updater)
+*   Based on concepts by [Keld Norman](https://www.youtube.com/watch?v=vSIBkH7sxos)
+
+## Key changes from the original project
+
+I have refactored the original script to fit a specific homelab toolkit, applying the following stylistic and functional improvements:
+
+*   **Tooling:**
+    * Replaced `curl` with **[`xh`](https://github.com/ducaale/xh)** (faster than `httpie`, better UX than `curl`).
+    * Replaced regexes with **[`jq`](https://jqlang.org/)** (easier to read for me).
+    * Removed Slack support as I personally don't need it.
+    * Removed IPv6 support as my ISP doesn't assign public IPv6 addresses yet.
+*   **IP detection:** Switched from HTTP-based services (like ipify) to DNS-based detection using **`dig`**. This is faster and generates less network overhead.
+*   **Local caching:** Implemented local caching for both the IP address and the Cloudflare Record ID. If the IP changes, the script attempts a direct `PATCH` request using the cached ID first. This saves an API lookup call during updates.
+*   **Security:** Removed hardcoded credentials. Configuration is now handled via secured secrets file (not part of the repo).
+*   **Safety:** Enabled bash strict mode (`set -euo pipefail`) for error handling.
 
 ## License
-[MIT](https://github.com/K0p1-Git/cloudflare-ddns-updater/blob/main/LICENSE)
+[MIT license](LICENSE)
